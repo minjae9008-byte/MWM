@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="어휘 방어전">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1122"/><stop offset="1" stop-color="#131c33"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#5ce0b0"/><stop offset="1" stop-color="#5ce0b0" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <circle cx="132" cy="108" r="3" fill="#9fc4ff" opacity=".7"/>
+  <circle cx="392" cy="86" r="2.4" fill="#9fc4ff" opacity=".55"/>
+  <circle cx="318" cy="150" r="2" fill="#9fc4ff" opacity=".45"/>
+  <rect x="150" y="96" width="212" height="74" rx="20" fill="#0f2740" stroke="#39b6e5" stroke-width="7"/>
+  <text x="256" y="147" font-family="system-ui,sans-serif" font-size="46" font-weight="800"
+        fill="#eaf4ff" text-anchor="middle">WORD</text>
+  <path d="M256 208 L246 170 L266 170 Z" fill="#39b6e5"/>
+  <path d="M256 430 L256 250" stroke="url(#beam)" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="256" cy="246" r="44" fill="#5ce0b0" opacity=".28"/>
+  <circle cx="256" cy="246" r="24" fill="#c8fff0" opacity=".75"/>
+  <rect x="64" y="424" width="384" height="10" rx="5" fill="#2a4066"/>
+  <path d="M214 424 l18 -28 h48 l18 28 z" fill="#69c9ff"/>
+  <rect x="112" y="398" width="16" height="26" rx="3" fill="#5ac8f5"/>
+  <rect x="140" y="386" width="16" height="38" rx="3" fill="#5ac8f5"/>
+  <rect x="356" y="392" width="16" height="32" rx="3" fill="#5ac8f5"/>
+  <rect x="384" y="402" width="16" height="22" rx="3" fill="#5ac8f5"/>
+</svg>

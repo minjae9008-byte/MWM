@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>미사일 커맨드 : 어휘 방어전</title>
+<meta name="description" content="떨어지는 영단어를 요격하며 외우는 로그라이크. FSRS-5 간격 반복 알고리즘으로 복습 일정을 잡아 준다.">
+<meta name="theme-color" content="#070b16">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <a class="skip-link" href="#overlay">본문으로 건너뛰기</a>
+
+  <main id="app">
+    <canvas id="game" aria-label="게임 화면" role="img"></canvas>
+    <div id="hud" class="hud" aria-hidden="false"></div>
+    <div id="overlay" class="overlay" aria-hidden="true"></div>
+  </main>
+
+  <noscript>
+    <div class="noscript">이 게임은 자바스크립트가 필요합니다. 브라우저 설정에서 활성화해 주세요.</div>
+  </noscript>
+
+  <script type="module" src="src/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => { /* 오프라인 캐시 없이도 동작한다 */ });
+      });
+    }
+  </script>
+</body>
+</html>

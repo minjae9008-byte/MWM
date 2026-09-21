@@ -1,0 +1,16 @@
+{
+  "name": "미사일 커맨드 : 어휘 방어전",
+  "short_name": "어휘 방어전",
+  "description": "떨어지는 영단어를 요격하며 외우는 로그라이크. FSRS-5 간격 반복으로 복습 일정을 잡아 준다.",
+  "lang": "ko",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070b16",
+  "theme_color": "#070b16",
+  "categories": ["education", "games"],
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
