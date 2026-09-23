@@ -6,11 +6,27 @@
 
 import { el, clear, num, pct, duration, toast } from './dom.js';
 import { renderStats } from './stats.js';
+import { renderWordbook } from './wordbook.js';
+import { renderTuning } from './tuning.js';
 import { DIFFICULTY_PRESETS } from '../core/balance.js';
-import { Direction } from '../core/scheduler.js';
+import { Direction, AnswerMode } from '../core/scheduler.js';
+import { RunMode } from '../core/run.js';
 import { formatInterval, State } from '../core/fsrs.js';
 import { RELIC_BY_ID } from '../core/upgrades.js';
 import { parseWordList } from '../data/decks.js';
+
+const ANSWER_MODE_OPTIONS = [
+  { id: AnswerMode.AUTO, name: '자동 승급 (권장)', desc: '재인으로 시작해, 기억이 자리 잡은 단어부터 철자 입력으로 올린다.' },
+  { id: AnswerMode.CHOICE, name: '4지선다', desc: '보기 중에 고른다. 빠르고 부담이 적다.' },
+  { id: AnswerMode.TYPING, name: '철자 입력', desc: '항상 직접 쓴다. 가장 강하게 남지만 느리고 어렵다.' },
+];
+
+const MODE_OPTIONS = [
+  { id: RunMode.CAMPAIGN, name: '방어전', icon: '🛡️',
+    desc: '기본 모드. 저장소가 무너지면 끝. 유물을 모아 멀리 간다.' },
+  { id: RunMode.TRAINING, name: '훈련', icon: '🎯',
+    desc: '저장소가 무너지지 않는다. 오늘 밀린 복습을 마음 편히 비우는 모드.' },
+];
 
 const DIRECTION_OPTIONS = [
   { id: Direction.KO_TO_EN, name: '뜻 → 영단어', desc: '가장 강한 인출 훈련. 시험과 작문에 직결된다.' },
@@ -66,10 +82,28 @@ export class Screens {
     if (!app.run) app.resetBattlefield();
 
     this.open('title', (p) => {
+      const daily = app.dailyProgress();
       p.appendChild(el('div', { class: 'brand' }, [
-        el('h1', {}, [el('span', { class: 'brand-mark', text: '▲' }), ' 미사일 커맨드 : 어휘 방어전']),
-        el('p', { class: 'tagline', text: '떨어지는 단어를 요격하라. 놓친 단어는 내일 다시 온다.' }),
+        el('div', { class: 'brand-row' }, [
+          el('div', {}, [
+            el('h1', {}, [el('span', { class: 'brand-mark', text: '▲' }), ' 미사일 커맨드 : 어휘 방어전']),
+            el('p', { class: 'tagline', text: '떨어지는 단어를 요격하라. 놓친 단어는 내일 다시 온다.' }),
+          ]),
+          goalRing(daily, app.profile.meta.streak),
+        ]),
       ]));
+
+      // 모드
+      p.appendChild(section('모드', null, el('div', { class: 'choice-row' },
+        MODE_OPTIONS.map((o) => el('button', {
+          class: `choice choice--sm${app.runMode === o.id ? ' is-on' : ''}`, type: 'button',
+          onClick: (e) => {
+            app.runMode = o.id;
+            [...e.currentTarget.parentElement.children].forEach((c) => c.classList.remove('is-on'));
+            e.currentTarget.classList.add('is-on');
+            app.audio.ui();
+          },
+        }, [el('b', { text: `${o.icon} ${o.name}` }), el('span', { class: 'choice-desc', text: o.desc })])))));
 
       // 덱 선택
       const deckBox = el('div', { class: 'choice-grid' });
@@ -114,6 +148,20 @@ export class Screens {
           },
         }, [el('b', { text: o.name }), el('span', { class: 'choice-desc', text: o.desc })])))));
 
+      // 출제 형식
+      p.appendChild(section('출제 형식',
+        '철자 입력은 보기 없이 직접 쓰는 자유 회상이다. 재인보다 훨씬 강하게 남는다.',
+        el('div', { class: 'choice-row' },
+          ANSWER_MODE_OPTIONS.map((o) => el('button', {
+            class: `choice choice--sm${s.answerMode === o.id ? ' is-on' : ''}`, type: 'button',
+            onClick: (e) => {
+              app.profile.updateSettings({ answerMode: o.id });
+              [...e.currentTarget.parentElement.children].forEach((c) => c.classList.remove('is-on'));
+              e.currentTarget.classList.add('is-on');
+              app.audio.ui();
+            },
+          }, [el('b', { text: o.name }), el('span', { class: 'choice-desc', text: o.desc })])))));
+
       // 난이도
       p.appendChild(section('속도', null, el('div', { class: 'choice-row' },
         DIFFICULTY_PRESETS.map((o) => el('button', {
@@ -151,7 +199,8 @@ export class Screens {
 
       p.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn btn--primary btn--lg', type: 'button', text: '출격',
-          onClick: () => { app.audio.unlock(); app.startRun(); } }),
+          onClick: () => { app.audio.unlock(); app.startRun({ mode: app.runMode }); } }),
+        el('button', { class: 'btn', type: 'button', text: '단어장', onClick: () => this.wordbook() }),
         el('button', { class: 'btn', type: 'button', text: '학습 통계', onClick: () => this.stats() }),
         el('button', { class: 'btn', type: 'button', text: '덱 관리', onClick: () => this.decks() }),
         el('button', { class: 'btn', type: 'button', text: '설정', onClick: () => this.settings() }),
@@ -195,7 +244,10 @@ export class Screens {
 
   results(sum, records) {
     this.open('results', (p) => {
-      p.appendChild(el('h2', { text: sum.wave > 1 ? '기억 방어선 붕괴' : '작전 종료' }));
+      p.appendChild(el('h2', { text:
+        sum.reason === 'cleared' ? '오늘 몫 완료'
+        : sum.mode === 'focus' ? '집중 훈련 종료'
+        : sum.wave > 1 ? '기억 방어선 붕괴' : '작전 종료' }));
 
       p.appendChild(el('div', { class: 'tiles tiles--compact' }, [
         statTile('점수', num(sum.score), records.score ? '신기록!' : `최고 ${num(this.app.profile.meta.bestScore)}`, records.score),
@@ -228,20 +280,30 @@ export class Screens {
       if (missed.length) {
         const seen = new Set();
         const rows = missed.filter((m) => !seen.has(m.word.id) && seen.add(m.word.id)).slice(0, 14);
-        p.appendChild(section('놓친 단어', '다음 판에서 먼저 다시 나온다.',
-          el('table', { class: 'viz-table' }, [
-            el('thead', {}, [el('tr', {}, ['단어', '뜻', '다음 복습'].map((h) => el('th', { text: h })))]),
-            el('tbody', {}, rows.map((m) => el('tr', {}, [
-              el('td', {}, [el('b', { text: m.word.en })]),
-              el('td', { text: m.word.ko }),
-              el('td', { text: m.intervalDays > 0 ? `${formatInterval(m.intervalDays)} 뒤` : '이번 판 안에서' }),
-            ]))),
-          ])));
+        p.appendChild(section('놓친 단어', '다음 판에서 먼저 다시 나온다. 예문이 있는 단어는 함께 보아 두자.',
+          el('div', { class: 'missed-list' }, rows.map((m) => el('div', { class: 'missed-row' }, [
+            el('div', { class: 'missed-head' }, [
+              el('b', { text: m.word.en }),
+              el('span', { class: 'missed-ko', text: m.word.ko }),
+              m.chosen && m.chosen.id !== m.word.id
+                ? el('span', { class: 'missed-pick', text: `↔ ${m.chosen.en} (${m.chosen.ko})와 헷갈림` })
+                : null,
+              el('span', { class: 'missed-due', text:
+                m.intervalDays > 0 ? `${formatInterval(m.intervalDays)} 뒤` : '이번 판 안에서' }),
+            ]),
+            m.word.ex ? el('p', { class: 'missed-ex', text: m.word.ex }) : null,
+            m.word.exKo ? el('p', { class: 'missed-ex-ko', text: m.word.exKo }) : null,
+          ])))));
       }
 
+      const missedIds = [...new Set(sum.log.filter((e) => !e.correct).map((e) => e.word.id))];
       p.appendChild(el('div', { class: 'actions' }, [
         el('button', { class: 'btn btn--primary btn--lg', type: 'button', text: '한 판 더',
-          onClick: () => this.app.startRun() }),
+          onClick: () => this.app.startRun({ mode: this.app.runMode }) }),
+        missedIds.length >= 3 ? el('button', {
+          class: 'btn', type: 'button', text: `놓친 ${missedIds.length}개 집중 복습`,
+          onClick: () => this.app.startFocusRun(missedIds),
+        }) : null,
         el('button', { class: 'btn', type: 'button', text: '학습 통계', onClick: () => this.stats() }),
         el('button', { class: 'btn btn--ghost', type: 'button', text: '메인으로', onClick: () => this.title() }),
       ]));
@@ -265,6 +327,49 @@ export class Screens {
     }, { dismissible: true });
   }
 
+  wordbook() {
+    const app = this.app;
+    this.open('wordbook', (p) => {
+      p.appendChild(el('h2', { text: '단어장' }));
+      p.appendChild(el('p', { class: 'sub', text:
+        '즐겨찾기한 단어는 먼저 나오고, 보류한 단어는 아예 나오지 않는다. 이미 아는 단어를 치우면 남은 시간이 모르는 단어로 간다.' }));
+      const host = el('div', { class: 'wb-host' });
+      p.appendChild(host);
+      renderWordbook(host, {
+        words: app.allWords(),
+        decks: app.allDecks(),
+        store: app.store,
+        onChange: () => app.profile.markDirty(),
+        onSpeak: (w) => app.speaker.say(w),
+        onFocusRun: (ids) => {
+          app.audio.unlock();
+          app.startFocusRun(ids);
+        },
+      });
+      p.appendChild(el('div', { class: 'actions actions--end' }, [
+        el('button', { class: 'btn', type: 'button', text: '닫기',
+          onClick: () => { app.profile.flush(); (app.run ? this.pause() : this.title()); } }),
+      ]));
+    }, { wide: true });
+  }
+
+  tuning() {
+    const app = this.app;
+    this.open('tuning', (p) => {
+      p.appendChild(el('h2', { text: '알고리즘 개인 최적화' }));
+      const host = el('div', { class: 'stats-host' });
+      p.appendChild(host);
+      renderTuning(host, {
+        profile: app.profile.data,
+        store: app.store,
+        onApply: (w, meta) => app.applyFsrsParams(w, meta),
+      });
+      p.appendChild(el('div', { class: 'actions actions--end' }, [
+        el('button', { class: 'btn', type: 'button', text: '닫기', onClick: () => this.settings() }),
+      ]));
+    }, { wide: true });
+  }
+
   stats() {
     this.open('stats', (p) => {
       p.appendChild(el('h2', { text: '학습 통계' }));
@@ -274,6 +379,7 @@ export class Screens {
         store: this.app.store,
         profile: this.app.profile.data,
         words: this.app.activeWords(),
+        onFocusRun: (ids) => { this.app.audio.unlock(); this.app.startFocusRun(ids); },
       });
       p.appendChild(el('div', { class: 'actions actions--end' }, [
         el('button', { class: 'btn', type: 'button', text: '닫기',
@@ -296,10 +402,63 @@ export class Screens {
         app.profile.updateSettings({ tts: v });
         app.speaker.enabled = v;
       }, app.speaker.supported ? null : '이 브라우저는 음성 합성을 지원하지 않는다.'));
+      p.appendChild(toggleRow('놓친 단어 발음 들려주기', s.ttsOnMiss, (v) => {
+        app.profile.updateSettings({ ttsOnMiss: v });
+      }, '틀린 직후가 가장 잘 박히는 순간이다.'));
       p.appendChild(toggleRow('화면 흔들림 줄이기', s.reduceMotion, (v) => {
         app.profile.updateSettings({ reduceMotion: v });
         if (app.renderer) app.renderer.reduceMotion = v;
       }));
+      p.appendChild(toggleRow('볼리 기호 항상 표시', s.volleyMarkers, (v) => {
+        app.profile.updateSettings({ volleyMarkers: v });
+        if (app.engine) app.engine.alwaysMarkers = v;
+      }, '색 대신 기호(●▲■)로도 문제를 구분한다. 색각 이상이 있어도 겹친 문제를 가릴 수 있다.'));
+
+      // 글자 크기
+      const fsOut = el('output', { text: `${Math.round(s.fontScale * 100)}%` });
+      p.appendChild(section('글자 크기', '떨어지는 단어와 문제 카드에 적용된다.',
+        el('div', { class: 'slider-row' }, [
+          el('input', {
+            type: 'range', min: '0.85', max: '1.4', step: '0.05', value: String(s.fontScale),
+            oninput: (e) => {
+              const v = Number(e.target.value);
+              fsOut.textContent = `${Math.round(v * 100)}%`;
+              app.profile.updateSettings({ fontScale: v });
+              if (app.engine) app.engine.fontScale = v;
+            },
+          }),
+          fsOut,
+        ])));
+
+      // 철자 입력 승급 기준
+      const thOut = el('output', { text: `${s.typingThreshold}일` });
+      p.appendChild(section('철자 입력으로 올리는 기준',
+        '자동 승급 모드에서, 기억 안정성이 이 값을 넘은 단어부터 보기 없이 직접 쓰게 한다. 낮출수록 빨리 어려워진다.',
+        el('div', { class: 'slider-row' }, [
+          el('input', {
+            type: 'range', min: '3', max: '60', step: '1', value: String(s.typingThreshold),
+            oninput: (e) => {
+              thOut.textContent = `${e.target.value}일`;
+              app.profile.updateSettings({ typingThreshold: Number(e.target.value) });
+            },
+          }),
+          thOut,
+        ])));
+
+      // 일일 목표
+      const goalOut = el('output', { text: `${s.dailyGoal}개` });
+      p.appendChild(section('하루 복습 목표',
+        '간격 반복은 몰아치기보다 매일 조금씩이 강하다. 목표는 시작 화면의 고리로 표시된다.',
+        el('div', { class: 'slider-row' }, [
+          el('input', {
+            type: 'range', min: '10', max: '200', step: '5', value: String(s.dailyGoal),
+            oninput: (e) => {
+              goalOut.textContent = `${e.target.value}개`;
+              app.profile.updateSettings({ dailyGoal: Number(e.target.value) });
+            },
+          }),
+          goalOut,
+        ])));
 
       // 목표 기억유지율
       const rOut = el('output', { text: pct(s.requestRetention) });
@@ -316,6 +475,12 @@ export class Screens {
             },
           }),
           rOut,
+        ])));
+
+      p.appendChild(section('알고리즘',
+        `내 복습 기록으로 FSRS 파라미터를 다시 맞춘다. ${app.profile.data.fsrsParams ? '현재 개인 파라미터를 쓰고 있다.' : '지금은 기본 파라미터를 쓰고 있다.'}`,
+        el('div', { class: 'actions actions--wrap' }, [
+          el('button', { class: 'btn', type: 'button', text: '개인 최적화 열기', onClick: () => this.tuning() }),
         ])));
 
       p.appendChild(section('데이터', '복습 기록은 이 브라우저에만 저장된다. 기기를 옮기려면 내보내기를 쓰자.',
@@ -391,10 +556,11 @@ export class Screens {
     this.open('help', (p) => {
       p.appendChild(el('h2', { text: '조작법' }));
       p.appendChild(el('div', { class: 'help-grid' }, [
-        helpRow('마우스 클릭', '그 지점에 요격 미사일을 쏜다. 십자선의 원이 폭발 범위 — 오답이 같이 들어오면 오답 처리된다.'),
+        helpRow('마우스 클릭', '그 지점에 요격 미사일을 쏜다. 십자선의 원이 폭발 범위 — 오답이 같이 들어오면 오답 처리된다. 미사일을 직접 클릭하면 도착 시점을 예측해 조준한다.'),
         helpRow('숫자키 1–9', '지금 문제의 왼쪽부터 N번째 미사일을 조준한다. 키보드만으로도 완주 가능.'),
+        helpRow('철자 입력', '⌨ 표시가 뜬 문제는 보기가 없다. 영단어를 직접 쓰고 Enter. 틀려도 낙하 전까지 다시 칠 수 있다.'),
         helpRow('Q · W · E · R', '보유한 스킬 발동. 집중 게이지를 소모한다.'),
-        helpRow('ESC 또는 P', '일시정지.'),
+        helpRow('ESC 또는 P', '일시정지. 입력창에 있을 때도 ESC로 빠져나온다.'),
       ]));
 
       p.appendChild(section('규칙', null, el('ul', { class: 'rules' }, [
@@ -411,7 +577,9 @@ export class Screens {
           el('li', { html: '맞히기까지 걸린 시간으로 <b>다시 / 어려움 / 보통 / 쉬움</b>이 매겨진다.' }),
           el('li', { html: 'FSRS-5가 그 판정으로 단어별 <b>안정성</b>과 <b>난이도</b>를 갱신하고 다음 복습일을 잡는다.' }),
           el('li', { html: '틀린 단어는 <b>같은 판 안에서</b> 두세 문제 뒤에 반드시 다시 나온다.' }),
+          el('li', { html: '기억이 자리 잡은 단어는 <b>철자 입력</b>으로 올라간다. 보기 중에 고르는 것과 직접 쓰는 것은 난이도가 다르고, 남는 정도도 다르다.' }),
           el('li', { html: '오답은 무작위가 아니라 같은 품사·같은 주제·비슷한 철자에서 고른다. 진짜로 헷갈리는 것끼리 붙여야 구별이 는다.' }),
+          el('li', { html: '틀리면 <b>무엇과 헷갈렸는지</b>를 정답과 나란히 보여 준다. 두 단어를 갈라 주는 게 어휘 학습의 핵심이다.' }),
           el('li', { html: '유물은 점수와 속도만 바꾼다. <b>복습 일정은 어떤 유물로도 조작되지 않는다.</b>' }),
         ])));
 
@@ -424,6 +592,40 @@ export class Screens {
 }
 
 // --- 작은 조립 부품 -----------------------------------------------------
+
+/** 오늘의 복습 목표 고리 — 습관이 알고리즘보다 먼저다 */
+function goalRing(daily, streak) {
+  const size = 92;
+  const r = 38;
+  const circ = 2 * Math.PI * r;
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  svg.setAttribute('class', 'goal-ring');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `오늘 복습 ${daily.done}회, 목표 ${daily.goal}회`);
+
+  const mk = (attrs) => {
+    const c = document.createElementNS(NS, 'circle');
+    for (const [k, v] of Object.entries(attrs)) c.setAttribute(k, String(v));
+    return c;
+  };
+  svg.appendChild(mk({ cx: size / 2, cy: size / 2, r, fill: 'none', stroke: 'rgba(255,255,255,.09)', 'stroke-width': 8 }));
+  svg.appendChild(mk({
+    cx: size / 2, cy: size / 2, r, fill: 'none',
+    stroke: daily.met ? '#5ce0b0' : '#3987e5', 'stroke-width': 8, 'stroke-linecap': 'round',
+    'stroke-dasharray': `${circ * daily.ratio} ${circ}`,
+    transform: `rotate(-90 ${size / 2} ${size / 2})`,
+  }));
+
+  return el('div', { class: `goal${daily.met ? ' is-met' : ''}` }, [
+    el('div', { class: 'goal-ring-wrap' }, [svg, el('b', { class: 'goal-num', text: String(daily.done) })]),
+    el('div', { class: 'goal-text' }, [
+      el('b', { text: daily.met ? '오늘 목표 달성' : `오늘 ${daily.done} / ${daily.goal}` }),
+      el('span', { text: streak > 0 ? `🔥 ${streak}일 연속` : '오늘 첫 판' }),
+    ]),
+  ]);
+}
 
 function section(title, note, body) {
   return el('section', { class: 'field' }, [

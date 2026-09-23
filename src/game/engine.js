@@ -13,13 +13,22 @@
 
 import { GROUND_RATIO } from '../core/balance.js';
 import { fxRandom as R } from '../core/rng.js';
+import { checkTyped, maskAnswer } from '../core/srs.js';
+import { AnswerMode } from '../core/scheduler.js';
 
+/**
+ * 볼리 색상.
+ *
+ * 색만으로 볼리를 구분하면 색각 이상이 있는 사람은 여러 문제가 겹쳤을 때
+ * 어느 미사일이 어느 문제 것인지 알 수 없다. 그래서 색마다 기호를 함께 붙인다
+ * (보조 부호화). 문제 카드와 미사일 칩에 같은 기호가 찍힌다.
+ */
 export const VOLLEY_COLORS = [
-  { h: 190, name: 'cyan' },
-  { h: 45, name: 'amber' },
-  { h: 330, name: 'rose' },
-  { h: 145, name: 'mint' },
-  { h: 265, name: 'violet' },
+  { h: 190, name: 'cyan', mark: '●' },
+  { h: 45, name: 'amber', mark: '▲' },
+  { h: 330, name: 'rose', mark: '■' },
+  { h: 145, name: 'mint', mark: '◆' },
+  { h: 265, name: 'violet', mark: '★' },
 ];
 
 const MAX_PARTICLES = 420;
@@ -57,6 +66,8 @@ export class Engine {
     this.ammoRegenTimer = 0;
     this.colorCursor = 0;
     this.paused = false;
+    this.fontScale = 1;
+    this.alwaysMarkers = false;
 
     this.resize(this.W, this.H);
   }
@@ -122,7 +133,10 @@ export class Engine {
   // --- 볼리 생성 ------------------------------------------------------
 
   spawnVolley(now) {
-    const q = this.run.nextQuestion(now);
+    // 타이핑 볼리는 화면에 혼자 있어야 한다.
+    // 키보드로 철자를 쓰는 동안 다른 문제가 같이 떨어지면 둘 다 놓친다.
+    const live = this.volleys.filter((v) => !v.resolved).length;
+    const q = this.run.nextQuestion(now, { allowTyping: live === 0 });
     if (!q) return null;
 
     const cfg = this.cfg;
@@ -142,17 +156,26 @@ export class Engine {
       fade: 0,
     };
 
-    const n = q.options.length;
+    const typing = q.mode === AnswerMode.TYPING;
+    volley.typing = typing;
+    volley.attempts = 0;
+    volley.fuzzy = false;
+    volley.revealLevel = 0;
+
+    // 타이핑은 보기가 없다 — 정답 하나만 내려온다
+    const entries = typing ? [q.options.find((o) => o.correct)] : q.options;
+    const n = entries.length;
     const margin = Math.min(110, this.W * 0.09);
     const usable = this.W - margin * 2;
     const slot = usable / n;
     const order = [...Array(n).keys()].sort(() => R.next() - 0.5);
 
-    q.options.forEach((opt, idx) => {
+    entries.forEach((opt, idx) => {
       const pos = order[idx];
       const fontSize = this.chipFontSize();
-      const tw = this.measureText(opt.text, fontSize);
-      const w = Math.max(74, tw + 30);
+      const shown = typing ? maskAnswer(opt.text, 0) : opt.text;
+      const tw = this.measureText(shown, fontSize);
+      const w = Math.max(typing ? 150 : 74, tw + 30);
       const h = fontSize + 20;
       const x = clampNum(margin + slot * pos + slot / 2 + R.range(-slot * 0.22, slot * 0.22), w / 2 + 6, this.W - w / 2 - 6);
       // 화면 밖에 머무는 시간을 짧게 잡는다. 반응 시간은 볼리가 뜬 순간부터 재는데
@@ -163,14 +186,16 @@ export class Engine {
       const travel = this.groundY - y;
       const vy = travel / (cfg.fallTime * 1000);
 
-      const armored = opt.correct && (cfg.isBoss || R.next() < cfg.armoredChance);
-      const mirv = !opt.correct && q.spares?.length > 0 && R.next() < cfg.mirvChance;
+      const armored = !typing && opt.correct && (cfg.isBoss || R.next() < cfg.armoredChance);
+      const mirv = !typing && !opt.correct && q.spares?.length > 0 && R.next() < cfg.mirvChance;
 
       this.missiles.push({
         id: uid(),
         volleyId: volley.id,
         word: opt.word,
-        text: opt.text,
+        text: shown,
+        answer: opt.text,
+        typing,
         correct: opt.correct,
         x, y, w, h,
         vx: R.range(-0.012, 0.012),
@@ -195,7 +220,12 @@ export class Engine {
   }
 
   chipFontSize() {
-    return Math.round(clampNum(this.W * 0.0155, 15, 24));
+    return Math.round(clampNum(this.W * 0.0155, 15, 24) * this.fontScale);
+  }
+
+  /** 볼리 기호를 미사일에도 찍을 것인가 (여러 문제가 겹칠 때는 항상) */
+  showMarkers() {
+    return this.alwaysMarkers || this.volleys.filter((v) => !v.resolved).length > 1;
   }
 
   /** 다탄두 분열 */
@@ -313,6 +343,68 @@ export class Engine {
     return true;
   }
 
+  /** 지금 답을 기다리는 타이핑 볼리 */
+  typingVolley() {
+    return this.volleys.find((v) => !v.resolved && v.typing) || null;
+  }
+
+  /**
+   * 타이핑 답안 제출.
+   * 맞으면 포탑이 알아서 요격한다 — 철자를 꺼낸 시점에 이미 이긴 것이고,
+   * 거기에 조준까지 요구하면 게임이 아니라 벌이 된다. 탄약도 쓰지 않는다.
+   *
+   * @returns {{ok:boolean, fuzzy?:boolean, attempts:number}|null}
+   */
+  submitTyped(text) {
+    const v = this.typingVolley();
+    if (!v || this.paused) return null;
+
+    const m = this.missiles.find((x) => x.volleyId === v.id && x.correct && x.alive && !x.inert);
+    if (!m) return null;
+
+    v.attempts += 1;
+    let res = checkTyped(text, v.question.answer);
+    // 같은 뜻을 가진 다른 단어를 썼다면 그것도 정답이다
+    if (!res.ok) {
+      for (const alt of v.question.accept || []) {
+        const r = checkTyped(text, alt);
+        if (r.ok) { res = { ok: true, fuzzy: r.fuzzy, synonym: alt }; break; }
+      }
+    }
+
+    if (!res.ok) {
+      this.shake = Math.min(this.shake + 5, 14);
+      this.addParticles(m.x, m.y, 6, 0, 0.5);
+      this.events.onTypedWrong?.(v.attempts);
+      return { ok: false, attempts: v.attempts };
+    }
+
+    v.fuzzy = res.fuzzy;
+    // 동의어로 맞혔다면 원래 물으려던 철자를 보여 준다 — 그 단어도 알아야 하니까
+    m.text = m.answer;
+    this.detonate(m.x, m.y, m.id, false);
+    this.events.onTypedRight?.(res.fuzzy);
+    return { ok: true, fuzzy: res.fuzzy, attempts: v.attempts };
+  }
+
+  /** 시간이 얼마 남지 않으면 글자를 조금씩 보여 준다 (평가는 '보통'으로 제한된다) */
+  updateTypingHints(wallNow) {
+    for (const v of this.volleys) {
+      if (v.resolved || !v.typing) continue;
+      const p = (wallNow - v.spawnedAt) / v.windowMs;
+      const want = p > 0.82 ? 2 : p > 0.62 ? 1 : 0;
+      if (want <= v.revealLevel) continue;
+      v.revealLevel = want;
+      if (want > 0) v.revealed = true;   // 도움을 받았으므로 '쉬움'은 주지 않는다
+      const m = this.missiles.find((x) => x.volleyId === v.id && x.correct && x.alive);
+      if (m) {
+        m.text = maskAnswer(m.answer, want);
+        const fs = this.chipFontSize();
+        m.w = Math.max(150, this.measureText(m.text, fs) + 30);
+      }
+    }
+  }
+
   findAutolockTarget() {
     const sorted = this.volleys.filter((v) => !v.resolved).sort((a, b) => a.spawnedAt - b.spawnedAt);
     for (const v of sorted) {
@@ -368,14 +460,17 @@ export class Engine {
 
     // 볼리 스폰
     if (this.waveActive) {
-      const live = this.volleys.filter((v) => !v.resolved).length;
+      const open = this.volleys.filter((v) => !v.resolved);
+      const live = open.length;
+      const typingBusy = open.some((v) => v.typing);
       this.spawnTimer -= dt;
-      if (this.spawnTimer <= 0 && live < this.cfg.maxConcurrent && this.run.hasVolleysLeft()) {
+      if (this.spawnTimer <= 0 && !typingBusy && live < this.cfg.maxConcurrent && this.run.hasVolleysLeft()) {
         if (this.spawnVolley(wallNow)) this.spawnTimer = this.cfg.gap * 1000;
         else this.spawnTimer = 400;
       }
     }
 
+    this.updateTypingHints(wallNow);
     this.updateMissiles(dt, speedFactor, wallNow);
     this.updateInterceptors(dt);
     this.updateExplosions(dt, wallNow);
@@ -520,6 +615,7 @@ export class Engine {
     v.resolved = true;
     v.fade = 0;
     v.resolvedCorrect = ev.correct;
+    v.chosen = ev.wrongWord || null;
 
     const reactionMs = Math.max(0, (ev.now || Date.now()) - v.spawnedAt);
     const entry = this.run.resolveVolley({
@@ -530,6 +626,9 @@ export class Engine {
       windowMs: v.windowMs,
       assisted: v.assisted,
       revealed: v.revealed,
+      attempts: v.attempts || 1,
+      fuzzy: !!v.fuzzy,
+      chosen: ev.wrongWord || null,
       now: ev.now,
     });
 

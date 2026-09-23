@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine } from '../src/game/engine.js';
-import { Run, MAX_CITIES } from '../src/core/run.js';
+import { Run, RunMode, MAX_CITIES } from '../src/core/run.js';
 import { SrsStore } from '../src/core/srs.js';
 import { computeMods } from '../src/core/upgrades.js';
 import { BUILTIN_DECKS } from '../src/data/decks.js';
@@ -223,4 +223,113 @@ test('시뮬레이션을 오래 돌려도 엔티티가 무한정 쌓이지 않�
   assert.ok(engine.popups.length <= 30, `팝업 누수: ${engine.popups.length}`);
   assert.ok(engine.explosions.length < 60, `폭발 누수: ${engine.explosions.length}`);
   assert.ok(engine.volleys.length <= 6, `볼리 누수: ${engine.volleys.length}`);
+});
+
+// --- 철자 입력 볼리 -----------------------------------------------------
+
+/** 모든 단어를 잘 아는 상태로 만들어 철자 입력 볼리가 나오게 한다 */
+function bootTyping() {
+  const store = new SrsStore();
+  for (const w of WORDS) {
+    const c = store.get(w.id);
+    Object.assign(c, { s: 40, d: 5, reps: 5, state: 'review', last: Date.now() - 50 * 86400000, due: Date.now() - 86400000 });
+  }
+  const run = new Run({ words: WORDS, store, seed: 11, newPerRun: 0, answerMode: 'typing' });
+  const engine = new Engine({ run, measureText: measure, events: {} });
+  engine.resize(1280, 720);
+  engine.beginWave();
+  return { run, engine, store };
+}
+
+test('철자 입력 볼리는 미사일 하나만 내려보내고 철자를 가린다', () => {
+  const { engine } = bootTyping();
+  const v = spinToVolley(engine);
+  assert.ok(v.typing, '철자 입력 볼리가 안 떴다');
+  const ms = engine.missiles.filter((m) => m.volleyId === v.id && m.alive);
+  assert.equal(ms.length, 1, '보기가 같이 떨어지면 타이핑이 아니다');
+  assert.equal(ms[0].correct, true);
+  assert.ok(ms[0].text.includes('_'), `철자가 그대로 노출됐다: ${ms[0].text}`);
+  assert.equal(ms[0].answer, v.question.answer);
+});
+
+test('철자 입력 볼리가 살아 있는 동안 다른 문제가 겹쳐 뜨지 않는다', () => {
+  const { engine } = bootTyping();
+  spinToVolley(engine);
+  for (let i = 0; i < 1200; i++) {
+    engine.update(16);
+    const open = engine.volleys.filter((v) => !v.resolved);
+    if (open.some((v) => v.typing)) assert.equal(open.length, 1, '타이핑 중에 다른 문제가 같이 떴다');
+  }
+});
+
+test('정답을 치면 탄약 없이도 요격된다', () => {
+  const { run, engine } = bootTyping();
+  const v = spinToVolley(engine);
+  for (const t of engine.turrets) t.ammo = 0;      // 탄약을 비워 둔다
+
+  const res = engine.submitTyped(v.question.answer);
+  assert.equal(res.ok, true);
+  for (let i = 0; i < 80; i++) engine.update(16);
+
+  assert.equal(run.stats.correct, 1);
+  assert.equal(engine.totalAmmo, 0, '철자로 맞혔는데 탄약을 썼다');
+  assert.equal(run.cities, MAX_CITIES);
+});
+
+test('틀리게 치면 볼리가 끝나지 않고 시도 횟수만 는다', () => {
+  const { run, engine } = bootTyping();
+  const v = spinToVolley(engine);
+
+  const bad = engine.submitTyped('definitelywrong');
+  assert.equal(bad.ok, false);
+  assert.equal(bad.attempts, 1);
+  assert.equal(v.resolved, false, '한 번 틀렸다고 문제가 끝나면 안 된다');
+  assert.equal(run.stats.correct, 0);
+  assert.equal(run.stats.wrong, 0);
+
+  engine.submitTyped(v.question.answer);
+  for (let i = 0; i < 80; i++) engine.update(16);
+  assert.equal(run.stats.correct, 1);
+  // 재시도 끝에 맞혔으므로 매끄러운 인출이 아니다
+  assert.equal(run.eventLog.at(-1).rating, 2);
+});
+
+test('시간이 흐르면 글자를 조금씩 보여 주고, 그만큼 평가를 제한한다', () => {
+  const { run, engine } = bootTyping();
+  const v = spinToVolley(engine);
+  const m = engine.missiles.find((x) => x.volleyId === v.id);
+  const before = m.text;
+
+  // 창의 70% 지점까지 진행
+  v.spawnedAt = Date.now() - v.windowMs * 0.7;
+  engine.updateTypingHints(Date.now());
+  assert.notEqual(m.text, before, '힌트가 안 나왔다');
+  assert.equal(v.revealed, true);
+
+  engine.submitTyped(v.question.answer);
+  for (let i = 0; i < 80; i++) engine.update(16);
+  assert.ok(run.eventLog.at(-1).rating <= 3, '힌트를 받고도 쉬움을 줬다');
+});
+
+test('철자 입력 볼리를 놓치면 다른 문제와 똑같이 저장소가 무너진다', () => {
+  const { run, engine } = bootTyping();
+  const v = spinToVolley(engine);
+  const m = engine.missiles.find((x) => x.volleyId === v.id);
+  m.y = engine.groundY - m.h / 2 - 1;
+  engine.update(32);
+  assert.equal(run.stats.landed, 1);
+  assert.equal(run.cities, MAX_CITIES - 1);
+});
+
+test('오답을 요격하면 무엇과 헷갈렸는지 기록에 남는다', () => {
+  const { run, engine } = boot();
+  const v = spinToVolley(engine);
+  const decoy = missilesOf(engine, v).find((m) => !m.correct);
+  engine.fireAt(decoy.x, decoy.y);
+  for (let i = 0; i < 200; i++) engine.update(16);
+
+  const entry = run.eventLog.at(-1);
+  assert.ok(entry.chosen, '고른 오답이 기록되지 않았다');
+  assert.equal(entry.chosen.id, decoy.word.id);
+  assert.notEqual(entry.chosen.id, entry.word.id);
 });

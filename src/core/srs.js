@@ -233,6 +233,15 @@ export function gradeFromEvent(ev) {
   else if (ratio <= 0.72) g = Rating.Good;
   else g = Rating.Hard;
 
+  // 타이핑은 보기가 없는 자유 회상이다. FSRS 파라미터가 학습된 과제와 같은 종류이므로
+  // 재인용 제동을 걸지 않는다 — 철자까지 꺼냈다면 정말로 아는 것이다.
+  if (ev.mode === 'typing') {
+    // 다만 오타/재시도가 있었다면 매끄러운 인출이 아니었다
+    if (ev.attempts > 1 || ev.fuzzy) g = Math.min(g, Rating.Hard);
+    if (ev.assisted || ev.revealed) g = Math.min(g, Rating.Good);
+    return g;
+  }
+
   if (g === Rating.Easy) {
     const options = ev.options ?? 4;
     if (options < 4) g = Rating.Good;            // 찍어서 맞을 확률이 너무 높다
@@ -240,6 +249,82 @@ export function gradeFromEvent(ev) {
     else if (ev.assisted || ev.revealed) g = Rating.Good;  // 내 기억이 아니다
   }
   return g;
+}
+
+// ---------------------------------------------------------------------
+// 타이핑 답안 채점
+// ---------------------------------------------------------------------
+
+/** 비교용 정규화 — 대소문자, 여분 공백, 관사, 구두점을 무시한다 */
+export function normalizeAnswer(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[.,!?;:'"()\[\]]/g, '')
+    .replace(/^(to|a|an|the)\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Levenshtein 거리 (조기 종료 포함) */
+export function editDistance(a, b, max = 3) {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * 타이핑 답안을 채점한다.
+ *
+ * 오타 한 글자로 "틀렸습니다"를 띄우면 아는 단어에도 좌절한다.
+ * 그렇다고 그냥 정답 처리하면 철자를 못 외운다.
+ * 그래서 오타는 통과시키되 평가를 '어려움'으로 낮춘다 — 다시 곧 물어본다.
+ *
+ * @returns {{ok:boolean, fuzzy:boolean}}
+ */
+export function checkTyped(input, answer) {
+  const a = normalizeAnswer(input);
+  if (!a) return { ok: false, fuzzy: false };
+
+  // 복수 정답은 정규화보다 **먼저** 쪼갠다.
+  // 정규화가 구두점을 지우므로, 순서를 바꾸면 "change, variation"이
+  // 통째로 한 덩어리가 되어 어느 쪽도 맞힐 수 없게 된다.
+  const raw = String(answer || '');
+  const parts = raw.split(/[,/]/).map((x) => x.trim()).filter(Boolean);
+  const alts = [...new Set([normalizeAnswer(raw), ...parts.map(normalizeAnswer)])].filter(Boolean);
+
+  if (alts.some((x) => x === a)) return { ok: true, fuzzy: false };
+
+  // 긴 단어에 한해 오타를 허용한다 (짧은 단어는 한 글자가 곧 다른 단어다)
+  for (const x of alts) {
+    const tolerance = x.length >= 8 ? 2 : x.length >= 5 ? 1 : 0;
+    if (tolerance > 0 && editDistance(a, x, tolerance) <= tolerance) return { ok: true, fuzzy: true };
+  }
+  return { ok: false, fuzzy: false };
+}
+
+/** 타이핑 모드에서 보여줄 힌트 — 첫 글자와 길이만 (`a _ _ _ e` 꼴) */
+export function maskAnswer(answer, revealLevel = 0) {
+  return String(answer).split(/(\s+)/).map((token) => {
+    if (/^\s+$/.test(token)) return token;
+    const chars = token.split('');
+    const show = Math.min(chars.length, 1 + revealLevel);
+    return chars.map((ch, i) => (i < show || !/[a-zA-Z]/.test(ch) ? ch : '_')).join(' ');
+  }).join('  ');
 }
 
 export { Rating, State };

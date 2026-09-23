@@ -14,6 +14,15 @@ import { SKILL_BY_ID } from '../core/upgrades.js';
 import { RELIC_BY_ID } from '../core/upgrades.js';
 import { formatInterval } from '../core/fsrs.js';
 
+/** 예문 안의 대상 단어를 굵게 — 어형이 바뀌어도 어간으로 잡는다 */
+function highlight(sentence, word) {
+  const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const stem = word.replace(/(e|y)$/i, '');
+  const safe = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!safe) return esc(sentence);
+  return esc(sentence).replace(new RegExp(`\\b${safe}[a-z]*`, 'gi'), (m) => `<b>${m}</b>`);
+}
+
 export class Hud {
   constructor(root) {
     this.root = root;
@@ -37,6 +46,24 @@ export class Hud {
     this.elEffects = el('div', { class: 'hud-effects' });
     this.elProgress = el('i', { class: 'wave-fill' });
 
+    // 철자 입력 — 타이핑 볼리가 떴을 때만 나타난다
+    this.elTypeInput = el('input', {
+      class: 'type-input', type: 'text', autocomplete: 'off', autocapitalize: 'off',
+      autocorrect: 'off', spellcheck: 'false', 'aria-label': '영단어 철자 입력',
+      placeholder: '영단어를 입력하고 Enter',
+    });
+    this.elTypeMeaning = el('b', { class: 'type-meaning' });
+    this.elTypeNote = el('span', { class: 'type-note' });
+    this.elTypeBar = el('div', { class: 'type-bar', hidden: true }, [
+      el('span', { class: 'type-badge', text: '⌨' }),
+      this.elTypeMeaning,
+      this.elTypeInput,
+      this.elTypeNote,
+    ]);
+
+    // 오답 학습 카드 — 놓친 직후가 가장 잘 들어오는 순간이다
+    this.elMissCard = el('div', { class: 'miss-card', hidden: true, 'aria-live': 'assertive' });
+
     r.appendChild(el('div', { class: 'hud-top' }, [
       el('div', { class: 'hud-left' }, [
         el('div', { class: 'stat' }, [el('label', { text: '웨이브' }), this.elWave]),
@@ -50,6 +77,8 @@ export class Hud {
     ]));
 
     r.appendChild(el('div', { class: 'wave-bar' }, [this.elProgress]));
+    r.appendChild(this.elMissCard);
+    r.appendChild(this.elTypeBar);
     r.appendChild(this.elEffects);
     r.appendChild(this.elFeed);
     r.appendChild(el('div', { class: 'hud-bottom' }, [
@@ -164,6 +193,110 @@ export class Hud {
     }
   }
 
+  /**
+   * 철자 입력 바 표시 제어.
+   * 입력창에 포커스가 가 있어야 바로 칠 수 있다 — 매번 클릭하게 만들면
+   * 그 0.5초가 그대로 반응 시간에 더해져 평가까지 왜곡된다.
+   */
+  updateTyping(engine, onSubmit, onEscape) {
+    const v = engine.typingVolley?.();
+    const id = v ? v.id : null;
+    if (id === this._typingId) {
+      if (v) this.elTypeNote.textContent = v.attempts ? `${v.attempts}회 시도` : '';
+      return;
+    }
+    this._typingId = id;
+
+    if (!v) {
+      this.elTypeBar.setAttribute('hidden', '');
+      this.elTypeInput.value = '';
+      this.elTypeInput.blur();
+      return;
+    }
+
+    this.elTypeMeaning.textContent = v.question.prompt;
+    this.elTypeNote.textContent = '';
+    this.elTypeInput.value = '';
+    this.elTypeBar.removeAttribute('hidden');
+    this._escape = onEscape;
+    if (!this._typingBound) {
+      this._typingBound = true;
+      this.elTypeInput.addEventListener('keydown', (ev) => {
+        // 입력창에 포커스가 있으면 전역 단축키가 막히므로 ESC만은 여기서 받는다
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          this.elTypeInput.blur();
+          this._escape?.();
+          return;
+        }
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        const text = this.elTypeInput.value;
+        if (!text.trim()) return;
+        const res = onSubmit(text);
+        if (res && !res.ok) {
+          this.elTypeInput.classList.remove('is-wrong');
+          void this.elTypeInput.offsetWidth;   // 리플로우로 애니메이션 재시작
+          this.elTypeInput.classList.add('is-wrong');
+          this.elTypeInput.select();
+        } else {
+          this.elTypeInput.value = '';
+        }
+      });
+    }
+    setTimeout(() => this.elTypeInput.focus(), 20);
+  }
+
+  /** 놓친 단어를 잠깐 크게 보여 준다 */
+  showMissCard(entry, onSpeak) {
+    clear(this.elMissCard);
+    const rows = [
+      el('div', { class: 'miss-inner' }, [
+        el('span', { class: 'miss-label', text: entry.landed ? '놓쳤다' : '오답' }),
+        el('b', { class: 'miss-word', text: entry.word.en }),
+        el('span', { class: 'miss-ko', text: entry.word.ko }),
+        onSpeak ? el('button', {
+          class: 'miss-speak', type: 'button', title: '발음 듣기', text: '🔊',
+          onClick: () => onSpeak(entry.word.en),
+        }) : null,
+      ]),
+    ];
+
+    // 무엇과 헷갈렸는지 바로 옆에 붙여 준다.
+    // "틀렸다"보다 "이것과 헷갈렸다"가 훨씬 많은 정보를 준다 — 두 단어를 갈라 주는 게
+    // 어휘 학습의 핵심이고, 그 비교는 틀린 직후에 해야 붙는다.
+    if (entry.chosen && entry.chosen.id !== entry.word.id) {
+      rows.push(el('div', { class: 'miss-confuse' }, [
+        el('span', { class: 'miss-pick' }, [
+          el('em', { text: '고른 것' }), ` ${entry.chosen.en}`,
+          el('i', { text: entry.chosen.ko }),
+        ]),
+        el('span', { class: 'miss-vs', text: '↔' }),
+        el('span', { class: 'miss-right' }, [
+          el('em', { text: '정답' }), ` ${entry.word.en}`,
+          el('i', { text: entry.word.ko }),
+        ]),
+      ]));
+    }
+
+    // 예문이 있으면 함께 — 맥락 없이 외운 단어는 문장에서 못 알아본다
+    if (entry.word.ex) {
+      rows.push(el('div', { class: 'miss-ex' }, [
+        el('span', { class: 'miss-ex-en', html: highlight(entry.word.ex, entry.word.en) }),
+        entry.word.exKo ? el('span', { class: 'miss-ex-ko', text: entry.word.exKo }) : null,
+      ]));
+    }
+
+    for (const r of rows) this.elMissCard.appendChild(r);
+    this.elMissCard.removeAttribute('hidden');
+    this.elMissCard.classList.add('is-in');
+    clearTimeout(this._missTimer);
+    this._missTimer = setTimeout(() => {
+      this.elMissCard.classList.remove('is-in');
+      setTimeout(() => this.elMissCard.setAttribute('hidden', ''), 300);
+    }, 2300);
+  }
+
   /** 한 문제가 끝날 때마다 우측에 쌓이는 기록 */
   pushFeed(entry) {
     const w = entry.word;
@@ -179,6 +312,7 @@ export class Hud {
       ]),
       el('div', { class: 'feed-meta' }, [
         el('span', { class: 'feed-rating', text: ['', '다시', '어려움', '보통', '쉬움'][entry.rating] }),
+        entry.typing ? el('span', { class: 'feed-typed', text: '⌨' }) : null,
         el('span', { text: label }),
       ]),
     ]);

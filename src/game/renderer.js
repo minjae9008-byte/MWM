@@ -9,6 +9,8 @@
 import { hitTest } from './engine.js';
 
 const FONT_STACK = `'Pretendard','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,'Segoe UI',sans-serif`;
+/** 마스킹된 철자는 고정폭이어야 글자 수가 눈에 들어온다 */
+const MONO_STACK = `ui-monospace,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace`;
 
 export class Renderer {
   constructor(canvas, engine) {
@@ -262,6 +264,7 @@ export class Renderer {
     const e = this.engine;
     const fs = e.chipFontSize();
     const blur = e.run.mods.blurText;
+    const marks = e.showMarkers();
 
     for (const m of e.missiles) {
       const v = e.volleys.find((x) => x.id === m.volleyId);
@@ -302,6 +305,15 @@ export class Renderer {
       roundRect(c, -w / 2, -hh / 2, w, hh, r);
       c.stroke();
 
+      if (m.typing) {
+        c.setLineDash([6, 4]);
+        c.strokeStyle = `hsla(${h},80%,66%,0.8)`;
+        c.lineWidth = 1.6;
+        roundRect(c, -w / 2 + 5, -hh / 2 + 5, w - 10, hh - 10, r - 3);
+        c.stroke();
+        c.setLineDash([]);
+      }
+
       if (m.armored) {
         c.strokeStyle = 'rgba(255,215,130,0.9)';
         c.lineWidth = 1.4;
@@ -319,13 +331,20 @@ export class Renderer {
       c.fill();
 
       // 단어
-      c.font = `700 ${fs}px ${FONT_STACK}`;
+      c.font = `700 ${fs}px ${m.typing ? MONO_STACK : FONT_STACK}`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
       if (blur && !hovered) { c.filter = 'blur(1.6px)'; }
       c.fillStyle = danger ? '#ffe6e6' : '#f2f8ff';
       c.fillText(m.text, 0, 1);
       c.filter = 'none';
+
+      // 색각 보조 — 여러 문제가 겹칠 때 어느 문제 것인지 기호로도 알 수 있게
+      if (marks && v) {
+        c.font = `700 ${Math.round(fs * 0.52)}px ${FONT_STACK}`;
+        c.fillStyle = `hsla(${h},85%,72%,0.95)`;
+        c.fillText(v.color.mark, w / 2 - 9, -hh / 2 + 9);
+      }
 
       if (reveal) {
         c.fillStyle = 'rgba(255,225,90,0.95)';
@@ -422,7 +441,7 @@ export class Renderer {
     if (!active.length) return;
 
     const baseY = this.H - (this.H - e.groundY) * 0.42;
-    const fs = Math.round(Math.min(34, Math.max(19, this.W * 0.021)));
+    const fs = Math.round(Math.min(34, Math.max(19, this.W * 0.021)) * this.engine.fontScale);
     const gap = 16;
 
     const cards = active.slice(0, 3).map((v) => {
@@ -461,15 +480,22 @@ export class Renderer {
       c.fillStyle = '#f4f9ff';
       c.fillText(v.question.prompt, cx, baseY + 1);
 
-      // 신규 단어 뱃지
-      if (v.question.isNew) {
+      // 볼리 기호 — 미사일 칩의 기호와 짝이 맞는다
+      c.font = `700 ${Math.round(fs * 0.5)}px ${FONT_STACK}`;
+      c.fillStyle = `hsla(${hue},85%,70%,0.9)`;
+      c.fillText(v.color.mark, x + 15, baseY + 1);
+
+      // 상태 뱃지
+      let badge = null;
+      let badgeColor = 'rgba(140,255,190,0.95)';
+      if (v.typing) { badge = '⌨ 철자 입력'; badgeColor = 'rgba(255,225,130,0.98)'; }
+      else if (v.question.isNew) { badge = 'NEW'; }
+      else if (v.question.lapses >= 3) { badge = '자주 틀림'; badgeColor = 'rgba(255,170,120,0.95)'; }
+      else if (v.question.starred) { badge = '★ 즐겨찾기'; badgeColor = 'rgba(255,215,130,0.95)'; }
+      if (badge) {
         c.font = `700 10px ${FONT_STACK}`;
-        c.fillStyle = 'rgba(140,255,190,0.95)';
-        c.fillText('NEW', cx, baseY - h / 2 - 9);
-      } else if (v.question.lapses >= 3) {
-        c.font = `700 10px ${FONT_STACK}`;
-        c.fillStyle = 'rgba(255,170,120,0.95)';
-        c.fillText('자주 틀림', cx, baseY - h / 2 - 9);
+        c.fillStyle = badgeColor;
+        c.fillText(badge, cx, baseY - h / 2 - 9);
       }
       c.restore();
       x += w + gap;

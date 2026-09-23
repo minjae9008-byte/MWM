@@ -11,8 +11,8 @@
 import { Profile } from './core/storage.js';
 import { WebStorageAdapter } from './platform/webStorage.js';
 import { SrsStore } from './core/srs.js';
-import { FSRS, State, DAY_MS } from './core/fsrs.js';
-import { Run, RunPhase } from './core/run.js';
+import { FSRS, State, DAY_MS, FSRS5_DEFAULT_W } from './core/fsrs.js';
+import { Run, RunPhase, RunMode } from './core/run.js';
 import { BUILTIN_DECKS, parseWordList } from './data/decks.js';
 import { DIFFICULTY_PRESETS } from './core/balance.js';
 import { Engine } from './game/engine.js';
@@ -22,20 +22,14 @@ import { AudioEngine, Speaker } from './game/audio.js';
 import { Hud } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
 import { $, toast } from './ui/dom.js';
+import { dayKey } from './core/storage.js';
 
 const FIXED_STEP = 1000 / 120;
 
 class App {
   constructor() {
     this.profile = new Profile(new WebStorageAdapter());
-    this.store = new SrsStore({
-      cards: this.profile.data.cards,
-      log: this.profile.data.log,
-      params: { requestRetention: this.profile.settings.requestRetention },
-    });
-    // 저장 객체와 동일 참조를 유지해야 카드 갱신이 곧 저장 대상이 된다
-    this.profile.data.cards = this.store.cards;
-    this.profile.data.log = this.store.log;
+    this.buildStore();
 
     this.audio = new AudioEngine();
     this.audio.enabled = this.profile.settings.sound;
@@ -47,6 +41,7 @@ class App {
     this.screens = new Screens($('#overlay'), this);
 
     this.run = null;
+    this.runMode = RunMode.CAMPAIGN;
     this.idleRun = this.makeDormantRun();
     this.engine = new Engine({ run: this.idleRun, events: this.engineEvents() });
     this.renderer = new Renderer(this.canvas, this.engine);
@@ -70,6 +65,13 @@ class App {
 
   allDecks() {
     return [...BUILTIN_DECKS, ...this.profile.data.customDecks];
+  }
+
+  /** 모든 덱의 단어 (단어장 화면용 — 선택 여부와 무관하게 전부 본다) */
+  allWords() {
+    const out = [];
+    for (const d of this.allDecks()) out.push(...d.words);
+    return out;
   }
 
   activeWords() {
@@ -131,13 +133,31 @@ class App {
   }
 
   rebuild() {
+    this.buildStore();
+  }
+
+  /** 프로필에서 저장소를 다시 세운다 (개인 최적화 파라미터 포함) */
+  buildStore() {
+    const personal = this.profile.data.fsrsParams;
     this.store = new SrsStore({
       cards: this.profile.data.cards,
       log: this.profile.data.log,
-      params: { requestRetention: this.profile.settings.requestRetention },
+      params: {
+        requestRetention: this.profile.settings.requestRetention,
+        w: personal && Array.isArray(personal.w) && personal.w.length === 19 ? personal.w : undefined,
+      },
     });
+    // 저장 객체와 동일 참조를 유지해야 카드 갱신이 곧 저장 대상이 된다
     this.profile.data.cards = this.store.cards;
     this.profile.data.log = this.store.log;
+  }
+
+  /** 오늘 복습한 횟수와 목표 */
+  dailyProgress() {
+    const key = dayKey(Date.now());
+    const done = this.profile.meta.daily[key]?.reviews || 0;
+    const goal = Math.max(1, this.profile.settings.dailyGoal || 40);
+    return { done, goal, ratio: Math.min(1, done / goal), met: done >= goal };
   }
 
   // --- 런 진행 --------------------------------------------------------
@@ -146,18 +166,27 @@ class App {
     return new Run({ words: BUILTIN_DECKS[0].words, store: this.store, seed: 1, newPerRun: 0 });
   }
 
-  startRun() {
+  /**
+   * @param {{mode?:string, words?:object[], newPerRun?:number}} opts
+   */
+  startRun(opts = {}) {
     const s = this.profile.settings;
     const diff = DIFFICULTY_PRESETS.find((d) => d.id === s.difficulty) || DIFFICULTY_PRESETS[1];
     this.store.fsrs.requestRetention = s.requestRetention;
 
+    const mode = opts.mode || RunMode.CAMPAIGN;
+    const words = opts.words && opts.words.length ? opts.words : this.activeWords();
+
     this.run = new Run({
-      words: this.activeWords(),
+      words,
       store: this.store,
       seed: Date.now(),
       difficulty: diff.mul,
       direction: s.direction,
-      newPerRun: s.newPerRun,
+      answerMode: s.answerMode,
+      typingThreshold: s.typingThreshold,
+      newPerRun: opts.newPerRun ?? (mode === RunMode.FOCUS ? 0 : s.newPerRun),
+      mode,
     });
 
     this.engine = new Engine({
@@ -167,6 +196,9 @@ class App {
     });
     this.renderer.engine = this.engine;
     this.input.engine = this.engine;
+    this.engine.fontScale = s.fontScale || 1;
+    this.engine.alwaysMarkers = !!s.volleyMarkers;
+    this.renderer.reduceMotion = !!s.reduceMotion;
     this.renderer.resize();
 
     this.hud.clearFeed();
@@ -178,6 +210,38 @@ class App {
     this.engine.beginWave();
     this.audio.unlock();
     this.audio.setEnabled(this.profile.settings.sound);
+  }
+
+  /**
+   * 약점 집중 훈련 — 지정한 단어들만 짧게 돈다.
+   * 자꾸 틀리는 단어는 일반 런에서 다른 단어에 묻히기 쉽다. 따로 떼어 놓고 때려야 뚫린다.
+   */
+  startFocusRun(ids) {
+    const set = new Set(ids);
+    const words = this.allWords().filter((w) => set.has(w.id));
+    if (words.length < 2) { toast('집중 훈련에는 단어가 2개 이상 필요하다.', 'warn'); return; }
+    // 보류해 둔 단어를 일부러 골랐다면 이번만 풀어 준다
+    for (const w of words) {
+      const c = this.store.cards[w.id];
+      if (c && c.suspended) c.suspended = false;
+    }
+    this.profile.markDirty();
+    this.startRun({ mode: RunMode.FOCUS, words, newPerRun: 0 });
+    toast(`${words.length}개 단어로 집중 훈련을 시작한다.`, 'ok');
+  }
+
+  /** 개인 최적화 파라미터 적용 (null이면 기본값으로 되돌린다) */
+  applyFsrsParams(w, meta) {
+    if (w && Array.isArray(w) && w.length === 19) {
+      this.profile.data.fsrsParams = { w: w.slice(), ...(meta || {}) };
+      this.store.fsrs.w = w.slice();
+      toast('개인 최적화 파라미터를 적용했다.', 'ok');
+    } else {
+      this.profile.data.fsrsParams = null;
+      this.store.fsrs.w = FSRS5_DEFAULT_W.slice();
+      toast('기본 파라미터로 되돌렸다.', 'ok');
+    }
+    this.profile.save();
   }
 
   engineEvents() {
@@ -193,19 +257,41 @@ class App {
   onResolve(entry) {
     this.hud.pushFeed(entry);
     this.profile.markDirty();
+    const s = this.profile.settings;
     if (entry.correct) {
       this.audio.correct(this.run.combo);
-      if (this.profile.settings.tts) this.speaker.say(entry.word.en);
+      if (s.tts) this.speaker.say(entry.word.en);
     } else {
       this.audio.wrong();
       if (entry.damaged) this.audio.cityLost();
+      // 놓친 직후가 가장 잘 박히는 순간이다 — 철자와 뜻을 크게 보여 주고 소리로도 들려준다
+      this.hud.showMissCard(entry, s.tts ? (w) => this.speaker.say(w) : null);
+      if (s.tts && s.ttsOnMiss) setTimeout(() => this.speaker.say(entry.word.en), 260);
     }
+  }
+
+  /** 철자 입력 제출 */
+  submitTyped(text) {
+    if (!this.run || this.screens.isOpen) return null;
+    this.audio.unlock();
+    const res = this.engine.submitTyped(text);
+    if (!res) return null;
+    if (res.ok) this.audio.fire();
+    else this.audio.wrong();
+    return res;
   }
 
   onWaveClear() {
     if (!this.run || !this.run.alive) return;
     this.audio.waveClear();
     this.engine.paused = true;
+
+    // 훈련·집중 모드는 할 일이 없어지면 끝난다 (목표가 '생존'이 아니라 '소진'이므로)
+    if (this.run.mode !== RunMode.CAMPAIGN && this.nothingLeftToStudy()) {
+      this.finishRun('cleared');
+      return;
+    }
+
     const offers = this.run.completeWave();
     this.engine.syncCities();
     if (!offers.length) { this.chooseOffer(null); return; }
@@ -220,6 +306,34 @@ class App {
     this.screens.close();
     this.engine.paused = false;
     this.engine.beginWave();
+  }
+
+  /** 선택한 덱에서 지금 더 낼 문제가 남아 있는가 */
+  nothingLeftToStudy() {
+    if (!this.run) return true;
+    const now = Date.now();
+    if (this.run.scheduler.pending.length) return false;
+    for (const w of this.run.scheduler.words) {
+      const c = this.store.cards[w.id];
+      if (!c || c.suspended) continue;
+      if (c.state !== State.New && c.due <= now) return false;
+    }
+    return this.run.scheduler.newIntroduced >= this.run.scheduler.newPerRun;
+  }
+
+  finishRun(reason) {
+    if (!this.run) return;
+    this.engine.paused = true;
+    const sum = { ...this.run.summary(), reason };
+    const m = this.profile.meta;
+    const records = {
+      score: sum.score > m.bestScore, wave: sum.wave > m.bestWave, combo: sum.maxCombo > m.bestCombo,
+    };
+    this.profile.recordRun(sum);
+    document.body.classList.remove('is-playing');
+    this.run = null;
+    this.audio.waveClear();
+    setTimeout(() => this.screens.results(sum, records), 500);
   }
 
   onGameOver() {
@@ -348,12 +462,12 @@ class App {
       rt = setTimeout(() => this.renderer.resize(), 120);
     });
     window.addEventListener('beforeunload', () => this.profile.flush());
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        this.profile.flush();
-        if (this.run && !this.screens.isOpen) this.togglePause();
-      }
-    });
+    const pauseAway = () => {
+      this.profile.flush();
+      if (this.run && !this.screens.isOpen && !this.engine.paused) this.togglePause();
+    };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pauseAway(); });
+    window.addEventListener('blur', pauseAway);
   }
 
   loop(ts) {
@@ -371,7 +485,10 @@ class App {
 
     this.renderer.numbering = this.run && !blocked ? this.input.currentNumbering() : null;
     this.renderer.draw(ts);
-    if (this.run) this.hud.update(this.run, this.engine, (id) => this.useSkill(id));
+    if (this.run) {
+      this.hud.update(this.run, this.engine, (id) => this.useSkill(id));
+      this.hud.updateTyping(this.engine, (text) => this.submitTyped(text), () => this.togglePause());
+    }
 
     requestAnimationFrame((t) => this.loop(t));
   }

@@ -82,6 +82,9 @@ export function createCardState(id, now = Date.now()) {
     elapsedAvgMs: 0,  // 평균 반응 시간 (게임 고유 지표)
     seen: 0,          // 총 노출 횟수
     correct: 0,       // 정답 횟수
+    starred: false,   // 우선 출제
+    suspended: false, // 출제 제외
+    typed: 0,         // 타이핑(자유 회상)으로 맞힌 횟수
   };
 }
 

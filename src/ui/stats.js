@@ -365,7 +365,15 @@ export function renderStats(host, ctx) {
       ? '4번 이상 실패한 단어들. 뜻을 쪼개거나 예문을 붙여서 따로 공략하는 편이 빠르다.'
       : '아직 반복해서 틀리는 단어가 없다.',
     leeches.length
-      ? el('table', { class: 'viz-table' }, [
+      ? el('div', {}, [
+        ctx.onFocusRun ? el('div', { class: 'actions actions--wrap' }, [
+          el('button', {
+            class: 'btn btn--primary', type: 'button',
+            text: `이 ${leeches.length}개로 집중 훈련`,
+            onClick: () => ctx.onFocusRun(leeches.map((l) => l.id)),
+          }),
+        ]) : null,
+        el('table', { class: 'viz-table' }, [
           el('thead', {}, [el('tr', {}, ['단어', '뜻', '실패', '안정성', '난이도'].map((h) => el('th', { text: h })))]),
           el('tbody', {}, leeches.map((l) => el('tr', {}, [
             el('td', {}, [el('b', { text: l.w.en })]),
@@ -374,7 +382,8 @@ export function renderStats(host, ctx) {
             el('td', { text: `${l.s.toFixed(1)}일` }),
             el('td', { text: l.d.toFixed(1) }),
           ]))),
-        ])
+        ]),
+      ])
       : el('p', { class: 'viz-note', text: '계속 이 상태를 유지하자.' })
   ));
 }

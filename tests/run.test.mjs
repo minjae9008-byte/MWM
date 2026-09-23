@@ -1,7 +1,7 @@
 /** 런 상태 기계 · 로그라이크 시스템 · 실제 한 판 시뮬레이션 */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Run, RunPhase, MAX_CITIES, MAX_FOCUS } from '../src/core/run.js';
+import { Run, RunPhase, RunMode, MAX_CITIES, MAX_FOCUS } from '../src/core/run.js';
 import { SrsStore } from '../src/core/srs.js';
 import { State, Rating } from '../src/core/fsrs.js';
 import { computeMods, rollOffers, RELICS, SKILLS, RELIC_BY_ID } from '../src/core/upgrades.js';
@@ -288,4 +288,60 @@ test('같은 시드는 같은 판을 재현한다', () => {
     return `${r.score}|${r.wave}|${r.maxCombo}|${r.relics.join(',')}`;
   };
   assert.equal(play(), play());
+});
+
+// --- 모드 -----------------------------------------------------------
+
+test('훈련 모드에서는 저장소가 무너지지 않는다', () => {
+  const run = new Run({ words: WORDS, store: new SrsStore(), seed: 4, newPerRun: 999, mode: RunMode.TRAINING });
+  run.startWave();
+  for (let i = 0; i < 20; i++) {
+    const q = run.nextQuestion();
+    if (!q) break;
+    run.resolveVolley({ question: q, correct: false, landed: true, reactionMs: 8000, windowMs: 8000 });
+  }
+  assert.equal(run.cities, MAX_CITIES, '훈련 모드인데 저장소가 깎였다');
+  assert.equal(run.alive, true);
+  // 그래도 기억 평가는 정직하게 기록된다
+  assert.ok(run.stats.byRating[1] > 0);
+  assert.ok(run.stats.landed > 0);
+});
+
+test('훈련 모드의 실패도 SRS에는 그대로 반영된다', () => {
+  const store = new SrsStore();
+  const run = new Run({ words: WORDS, store, seed: 4, newPerRun: 999, mode: RunMode.TRAINING });
+  run.startWave();
+  const q = run.nextQuestion();
+  run.resolveVolley({ question: q, correct: false, landed: true, reactionMs: 8000, windowMs: 8000 });
+  const card = store.cards[q.word.id];
+  assert.ok(card, '카드가 안 생겼다');
+  assert.equal(card.reps, 1);
+  assert.equal(run.eventLog.at(-1).rating, Rating.Again);
+});
+
+test('집중 모드는 주어진 단어만 낸다', () => {
+  const subset = WORDS.slice(0, 6);
+  const run = new Run({ words: subset, store: new SrsStore(), seed: 8, newPerRun: 0, mode: RunMode.FOCUS });
+  const ids = new Set(subset.map((w) => w.id));
+  run.startWave();
+  let q;
+  let n = 0;
+  while ((q = run.nextQuestion()) && n < 40) {
+    assert.ok(ids.has(q.word.id), `범위 밖 단어가 나왔다: ${q.word.id}`);
+    run.resolveVolley({ question: q, correct: true, landed: false, reactionMs: 2000, windowMs: 8000 });
+    n++;
+  }
+  assert.ok(n > 0);
+});
+
+test('철자 입력으로 맞힌 횟수를 따로 센다', () => {
+  const store = new SrsStore();
+  const run = new Run({ words: WORDS, store, seed: 4, newPerRun: 999, answerMode: 'typing' });
+  run.startWave();
+  const q = run.nextQuestion();
+  q.mode = 'typing';                            // 첫 노출이라 스케줄러는 재인을 주지만, 집계 경로를 확인한다
+  run.resolveVolley({ question: q, correct: true, landed: false, reactionMs: 1500, windowMs: 8000 });
+  assert.equal(run.stats.typed, 1);
+  assert.equal(store.cards[q.word.id].typed, 1);
+  assert.equal(run.summary().typed, 1);
 });

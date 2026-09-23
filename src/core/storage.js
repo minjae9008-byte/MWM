@@ -13,14 +13,17 @@ export function defaultSettings() {
     deckIds: ['basic'],
     direction: 'ko2en',
     difficulty: 'normal',
+    answerMode: 'auto',        // choice | typing | auto
+    typingThreshold: 10,       // auto 모드에서 철자 입력으로 올리는 안정성(일)
     newPerRun: 14,
+    dailyGoal: 40,             // 하루 복습 목표
     requestRetention: 0.9,
     sound: true,
     tts: true,
+    ttsOnMiss: true,
     reduceMotion: false,
-    showRomaja: false,
-    fontScale: 1,
-    gradeOnPractice: true,
+    fontScale: 1,              // 0.85 ~ 1.3
+    volleyMarkers: false,      // 볼리 기호를 항상 표시 (색각 보조)
   };
 }
 
@@ -32,6 +35,8 @@ export function defaultProfile() {
     cards: {},
     log: [],
     customDecks: [],
+    fsrsParams: null,          // {w, optimizedAt, n, improvement} — 개인 최적화 결과
+
     meta: {
       runs: 0,
       bestScore: 0,
@@ -153,6 +158,10 @@ export class Profile {
       }
       this.data.log = [...(this.data.log || []), ...(incoming.log || [])]
         .sort((a, b) => a.t - b.t).slice(-5000);
+      if (incoming.fsrsParams && (!this.data.fsrsParams
+          || (incoming.fsrsParams.optimizedAt || 0) > (this.data.fsrsParams.optimizedAt || 0))) {
+        this.data.fsrsParams = incoming.fsrsParams;
+      }
       for (const d of incoming.customDecks || []) {
         if (!this.data.customDecks.some((x) => x.id === d.id)) this.data.customDecks.push(d);
       }
@@ -195,5 +204,9 @@ function migrate(data) {
   data.cards = data.cards || {};
   data.log = data.log || [];
   data.customDecks = data.customDecks || [];
+  if (data.fsrsParams === undefined) data.fsrsParams = null;
+  // 더 이상 쓰지 않는 설정은 정리한다
+  delete data.settings.showRomaja;
+  delete data.settings.gradeOnPractice;
   return data;
 }

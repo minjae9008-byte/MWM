@@ -155,6 +155,21 @@ saved && saved.repeated > 0
 saved && saved.badState === 0 ? ok('모든 카드 상태가 유효하다') : bad(`상태가 깨진 카드 ${saved?.badState}개`);
 console.log(`  (졸업해 장기 일정을 받은 단어: ${saved?.scheduled}개 — 웨이브를 더 진행하면 늘어난다)`);
 
+console.log('\n숨김 요소');
+// hidden 속성이 걸린 요소가 정말로 화면에서 사라지는지 본다.
+// 속성만 확인하면 CSS 명시도 때문에 보이는 채로 남는 경우를 놓친다.
+const ghosts = await page.evaluate(() => {
+  const out = [];
+  for (const node of document.querySelectorAll('[hidden]')) {
+    const cs = getComputedStyle(node);
+    if (cs.display !== 'none' && cs.visibility !== 'hidden') {
+      out.push(node.className || node.tagName);
+    }
+  }
+  return out;
+});
+ghosts.length === 0 ? ok('hidden 요소가 모두 실제로 숨겨져 있다') : bad(`hidden인데 보이는 요소: ${ghosts.join(', ')}`);
+
 console.log('\n모바일 레이아웃');
 const m = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 await m.goto(URL, { waitUntil: 'networkidle' });

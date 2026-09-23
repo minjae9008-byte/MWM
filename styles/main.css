@@ -42,6 +42,13 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * hidden 속성이 항상 이기게 한다.
+ * `display: flex` 같은 클래스 규칙은 브라우저 기본값 `[hidden]{display:none}` 보다
+ * 명시도가 높아서, 속성만 걸어 두면 숨겨지지 않는다.
+ */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -522,3 +529,235 @@ body.is-playing .hud { opacity: 1; }
     transition-duration: .01ms !important;
   }
 }
+
+/* ===================================================================
+   철자 입력 (타이핑 볼리)
+   =================================================================== */
+
+.type-bar {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: rgba(10, 16, 30, .96); border: 1px solid rgba(255, 215, 130, .5);
+  box-shadow: 0 18px 44px -14px rgba(0, 0, 0, .85);
+  pointer-events: auto; max-width: min(620px, 92vw);
+  animation: rise .2s ease;
+}
+.type-badge { font-size: 18px; line-height: 1; }
+.type-meaning {
+  font-size: 19px; font-weight: 800; white-space: nowrap;
+  max-width: 34vw; overflow: hidden; text-overflow: ellipsis;
+}
+.type-input {
+  flex: 1; min-width: 180px; padding: 10px 14px; border-radius: var(--radius-sm);
+  background: var(--surface-0); border: 1px solid var(--line);
+  color: var(--text-primary); font-size: 17px; font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace; letter-spacing: .04em;
+}
+.type-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 209, 197, .18); }
+.type-input.is-wrong { border-color: var(--critical); animation: shake .32s; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+.type-note { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+
+/* 오답 학습 카드 */
+.miss-card {
+  position: absolute; left: 50%; top: 22%; transform: translate(-50%, -8px);
+  pointer-events: auto; opacity: 0; transition: opacity .22s ease, transform .22s ease;
+}
+.miss-card.is-in { opacity: 1; transform: translate(-50%, 0); }
+.miss-inner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 22px; border-radius: var(--radius);
+  background: rgba(14, 10, 16, .95); border: 1px solid rgba(230, 103, 103, .55);
+  box-shadow: 0 20px 50px -16px rgba(0, 0, 0, .9);
+}
+.miss-label {
+  font-size: 10px; font-weight: 800; letter-spacing: .12em;
+  color: var(--critical); text-transform: uppercase;
+}
+.miss-word { font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+.miss-ko { font-size: 17px; color: var(--text-secondary); }
+.miss-speak {
+  background: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 5px 9px; cursor: pointer; font-size: 15px; line-height: 1;
+}
+.miss-speak:hover { background: var(--surface-3); }
+
+.feed-typed { color: var(--warning); }
+
+/* ===================================================================
+   일일 목표 고리
+   =================================================================== */
+
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+
+.goal { display: flex; align-items: center; gap: 13px; }
+.goal-ring-wrap { position: relative; width: 72px; height: 72px; flex: none; }
+.goal-ring { width: 100%; height: 100%; display: block; }
+.goal-num {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.goal-text { display: flex; flex-direction: column; gap: 2px; }
+.goal-text b { font-size: 14px; }
+.goal-text span { font-size: 12px; color: var(--text-secondary); }
+.goal.is-met .goal-text b { color: var(--accent-strong); }
+
+.goal-bar { height: 7px; border-radius: 999px; background: rgba(255, 255, 255, .08); overflow: hidden; margin: 10px 0 6px; }
+.goal-bar i { display: block; height: 100%; background: var(--cat-1); transition: width .25s ease; }
+
+/* ===================================================================
+   단어장
+   =================================================================== */
+
+.wb-host { display: flex; flex-direction: column; gap: 12px; }
+.wb-controls { display: flex; flex-direction: column; gap: 10px; }
+.wb-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.chip {
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--text-secondary); font-family: inherit; cursor: pointer;
+  transition: all .14s ease; white-space: nowrap;
+}
+.chip:hover { border-color: rgba(79, 209, 197, .45); color: var(--text-primary); }
+.chip.is-on { background: rgba(79, 209, 197, .14); border-color: var(--accent); color: var(--text-primary); }
+.chip--sm { font-size: 11.5px; padding: 5px 10px; }
+
+.select {
+  padding: 7px 11px; border-radius: var(--radius-sm); font-size: 12.5px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--text-primary); font-family: inherit; cursor: pointer;
+}
+
+.wb-summary { margin: 0; font-size: 12px; color: var(--text-muted); }
+
+.wb-list { display: flex; flex-direction: column; gap: 5px; max-height: 46vh; overflow-y: auto; padding-right: 4px; }
+.wb-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 14px; align-items: center;
+  padding: 9px 13px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.wb-row.is-suspended { opacity: .48; }
+.wb-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wb-word { display: flex; align-items: center; gap: 7px; }
+.wb-word b { font-size: 14.5px; }
+.wb-star { color: var(--warning); font-size: 12px; }
+.wb-ko { font-size: 12.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.wb-meta { display: flex; align-items: center; gap: 9px; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.wb-num { font-variant-numeric: tabular-nums; min-width: 0; }
+.wb-due { color: var(--text-secondary); min-width: 54px; text-align: right; }
+.wb-badge { padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; }
+.wb-badge--new { background: rgba(57, 135, 229, .18); color: #8fc0f7; }
+.wb-badge--learning { background: rgba(217, 89, 38, .18); color: #f0a07e; }
+.wb-badge--review { background: rgba(25, 158, 112, .18); color: #7fd9b8; }
+.wb-badge--relearning { background: rgba(201, 133, 0, .18); color: #e5be6b; }
+.wb-badge--suspended { background: rgba(120, 130, 150, .18); color: var(--text-muted); }
+
+.wb-actions { display: flex; gap: 3px; }
+.icon-btn {
+  background: none; border: 1px solid transparent; border-radius: 7px;
+  padding: 4px 7px; cursor: pointer; font-size: 13px; line-height: 1;
+  color: var(--text-muted); font-family: inherit; transition: all .14s ease;
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text-primary); border-color: var(--line); }
+.icon-btn.is-on { color: var(--warning); }
+.wb-more { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ===================================================================
+   개인 최적화
+   =================================================================== */
+
+.tune-progress { margin-top: 12px; }
+.tune-label { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.tune-result { margin-top: 14px; }
+.tune-verdict {
+  margin: 12px 0 0; padding: 12px 15px; border-radius: var(--radius-sm);
+  font-size: 13.5px; line-height: 1.6;
+}
+.tune-verdict.is-good { background: rgba(25, 158, 112, .1); border: 1px solid rgba(25, 158, 112, .35); }
+.tune-verdict.is-flat { background: rgba(201, 133, 0, .09); border: 1px solid rgba(201, 133, 0, .3); }
+.tune-params { margin-top: 14px; }
+.tune-params summary { font-size: 12.5px; color: var(--accent); cursor: pointer; }
+.param-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 5px; margin-top: 10px;
+}
+.param {
+  display: flex; gap: 6px; align-items: baseline;
+  padding: 5px 8px; border-radius: 6px; background: var(--surface-2);
+  font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--text-secondary);
+}
+.param em { font-style: normal; color: var(--text-muted); font-size: 10.5px; min-width: 22px; }
+.param.is-changed { background: rgba(57, 135, 229, .14); color: var(--text-primary); }
+
+.viz-dot { transition: r .12s ease; cursor: pointer; }
+.viz-dot:hover { r: 7; }
+g:focus-visible .viz-dot { stroke: var(--text-primary); stroke-width: 2; }
+
+@media (max-width: 860px) {
+  .type-bar { bottom: 74px; padding: 9px 12px; gap: 8px; width: 92vw; }
+  .type-meaning { font-size: 16px; max-width: 30vw; }
+  .type-input { font-size: 15px; min-width: 110px; padding: 8px 11px; }
+  .type-note { display: none; }
+  .miss-word { font-size: 21px; }
+  .miss-inner { padding: 11px 16px; gap: 10px; }
+  .wb-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .wb-meta { grid-column: 1 / -1; justify-content: flex-start; }
+  .brand-row { flex-direction: column; align-items: flex-start; }
+}
+
+/* 오답 카드: 무엇과 헷갈렸는가 · 예문 */
+.miss-confuse {
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+  margin-top: 7px; padding: 9px 18px; border-radius: 0 0 var(--radius) var(--radius);
+  background: rgba(14, 10, 16, .95); border: 1px solid rgba(230, 103, 103, .35); border-top: none;
+  font-size: 13px;
+}
+.miss-pick, .miss-right { display: flex; align-items: baseline; gap: 6px; font-weight: 700; }
+.miss-pick { color: var(--critical); }
+.miss-right { color: var(--good); }
+.miss-confuse em { font-style: normal; font-size: 10px; color: var(--text-muted); font-weight: 700; }
+.miss-confuse i { font-style: normal; font-size: 12px; color: var(--text-secondary); font-weight: 400; }
+.miss-vs { color: var(--text-muted); }
+
+.miss-ex {
+  display: flex; flex-direction: column; gap: 2px; margin-top: 7px;
+  padding: 10px 18px; border-radius: 0 0 var(--radius) var(--radius);
+  background: rgba(10, 14, 24, .95); border: 1px solid var(--line); border-top: none;
+  max-width: 560px;
+}
+.miss-ex-en { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
+.miss-ex-en b { color: var(--accent-strong); }
+.miss-ex-ko { font-size: 12px; color: var(--text-muted); }
+
+/* 단어장 예문 · 품사 */
+.wb-pos {
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  background: var(--surface-3); color: var(--text-muted); font-weight: 700;
+}
+.wb-ex { margin-top: 3px; }
+.wb-ex summary { font-size: 11px; color: var(--accent); cursor: pointer; }
+.wb-ex-en { margin: 5px 0 1px; font-size: 12.5px; color: var(--text-primary); line-height: 1.5; }
+.wb-ex-ko { margin: 0; font-size: 12px; color: var(--text-muted); }
+
+/* 결과: 놓친 단어 목록 */
+.missed-list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.missed-row {
+  padding: 10px 13px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+}
+.missed-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.missed-head b { font-size: 14.5px; }
+.missed-ko { font-size: 13px; color: var(--text-secondary); }
+.missed-pick { font-size: 11.5px; color: var(--warning); }
+.missed-due { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.missed-ex { margin: 6px 0 0; font-size: 12.5px; color: var(--text-primary); line-height: 1.5; }
+.missed-ex-ko { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }

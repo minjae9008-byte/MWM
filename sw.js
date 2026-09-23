@@ -17,6 +17,7 @@ const ASSETS = [
   './src/core/fsrs.js',
   './src/core/srs.js',
   './src/core/korean.js',
+  './src/core/optimizer.js',
   './src/core/scheduler.js',
   './src/core/upgrades.js',
   './src/core/balance.js',
@@ -32,6 +33,8 @@ const ASSETS = [
   './src/ui/hud.js',
   './src/ui/screens.js',
   './src/ui/stats.js',
+  './src/ui/wordbook.js',
+  './src/ui/tuning.js',
 ];
 
 self.addEventListener('install', (e) => {

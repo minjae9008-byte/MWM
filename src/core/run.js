@@ -9,10 +9,26 @@
  */
 
 import { RNG } from './rng.js';
-import { QuestionScheduler, Direction } from './scheduler.js';
+import { QuestionScheduler, Direction, AnswerMode } from './scheduler.js';
 import { gradeFromEvent, Rating } from './srs.js';
 import { computeMods, rollOffers, RELIC_BY_ID, SKILL_BY_ID } from './upgrades.js';
 import { waveConfig, scoreFor, comboMultiplier, clamp } from './balance.js';
+
+/**
+ * 런 종류.
+ *
+ * CAMPAIGN  기본 로그라이크. 저장소가 무너지면 끝난다.
+ * TRAINING  방어 훈련 — 저장소가 무너지지 않고 웨이브 제한도 없다.
+ *           "오늘 밀린 복습을 그냥 비우고 싶은 날"을 위한 모드.
+ *           간격 반복은 매일 해야 의미가 있는데, 매번 실패 위험을 감수해야 하면
+ *           안 하게 된다. 습관이 알고리즘보다 먼저다.
+ * FOCUS     약점 집중 — 자꾸 틀리는 단어만 모아서 짧게 돈다.
+ */
+export const RunMode = Object.freeze({
+  CAMPAIGN: 'campaign',
+  TRAINING: 'training',
+  FOCUS: 'focus',
+});
 
 export const RunPhase = Object.freeze({
   READY: 'ready',
@@ -35,6 +51,8 @@ export class Run {
     this.seed = this.rng.seed;
     this.store = opts.store;
     this.difficulty = opts.difficulty ?? 1;
+    this.mode = opts.mode ?? RunMode.CAMPAIGN;
+    this.invulnerable = this.mode === RunMode.TRAINING;
 
     this.relics = [];
     this.skills = (opts.startingSkills || ['slowfield']).slice();
@@ -46,6 +64,8 @@ export class Run {
       rng: this.rng,
       newPerRun: (opts.newPerRun ?? 14) + this.mods.newCardBonus,
       direction: opts.direction ?? Direction.KO_TO_EN,
+      answerMode: opts.answerMode ?? AnswerMode.AUTO,
+      typingThreshold: opts.typingThreshold ?? 10,
     });
 
     this.phase = RunPhase.READY;
@@ -62,7 +82,7 @@ export class Run {
 
     this.effects = { slow: 0, overcharge: 0, reveal: 0, autolock: 0 };
     this.stats = {
-      shots: 0, hits: 0, misses: 0, landed: 0,
+      shots: 0, hits: 0, misses: 0, landed: 0, typed: 0,
       correct: 0, wrong: 0, byRating: { 1: 0, 2: 0, 3: 0, 4: 0 },
       newLearned: 0, wordsSeen: new Set(), startedAt: Date.now(),
     };
@@ -95,12 +115,12 @@ export class Run {
   }
 
   /** 다음 문제를 꺼낸다 */
-  nextQuestion(now = Date.now()) {
+  nextQuestion(now = Date.now(), opts = {}) {
     if (this.volleysLeftInWave <= 0) return null;
     this.volleysLeftInWave -= 1;
     this.volleysThisWave += 1;
     const cfg = this.config;
-    const q = this.scheduler.nextQuestion({ decoys: cfg.decoys, now });
+    const q = this.scheduler.nextQuestion({ decoys: cfg.decoys, now, allowTyping: opts.allowTyping });
     this.scheduler.advance();
     this.stats.wordsSeen.add(q.word.id);
     if (q.isNew) this.stats.newLearned += 1;
@@ -155,6 +175,7 @@ export class Run {
     const q = ev.question;
     const rating = gradeFromEvent({
       ...ev,
+      mode: q.mode,
       options: q.options ? q.options.length : 4,
       firstExposure: q.isNew,
     });
@@ -175,6 +196,10 @@ export class Run {
 
     if (ev.correct && !ev.landed) {
       this.stats.correct += 1;
+      if (q.mode === AnswerMode.TYPING) {
+        this.stats.typed += 1;
+        result.card.typed = (result.card.typed || 0) + 1;
+      }
       this.combo += 1;
       this.maxCombo = Math.max(this.maxCombo, this.combo);
       gained = scoreFor({
@@ -192,7 +217,9 @@ export class Run {
     } else {
       this.stats[ev.landed ? 'landed' : 'wrong'] += 1;
       this.combo = 0;
-      if (this.shields > 0) {
+      if (this.invulnerable) {
+        shielded = true;
+      } else if (this.shields > 0) {
         this.shields -= 1;
         shielded = true;
       } else {
@@ -205,6 +232,7 @@ export class Run {
     const entry = {
       t: now, word: q.word, rating, correct: ev.correct && !ev.landed,
       landed: !!ev.landed, gained, intervalDays: result.intervalDays,
+      chosen: ev.chosen || null, typing: q.mode === AnswerMode.TYPING,
       state: result.card.state, reactionMs: ev.reactionMs, combo: this.combo,
       shielded, damaged, source: q.source,
     };
@@ -290,6 +318,8 @@ export class Run {
       wrong: s.wrong,
       landed: s.landed,
       newLearned: s.newLearned,
+      typed: s.typed,
+      mode: this.mode,
       uniqueWords: s.wordsSeen.size,
       byRating: { ...s.byRating },
       relics: this.relics.map((id) => RELIC_BY_ID.get(id)).filter(Boolean),
@@ -301,4 +331,4 @@ export class Run {
   }
 }
 
-export { Direction, Rating };
+export { Direction, AnswerMode, Rating };

@@ -48,16 +48,17 @@ E2E가 390×844 화면에서도 전투가 정상 진행되고 가로 스크롤�
 | `src/core/srs.js` | `lib/core/srs.dart` | 그대로 |
 | `src/core/scheduler.js` | `lib/core/scheduler.dart` | 그대로 |
 | `src/core/run.js` | `lib/core/run.dart` | 그대로 |
+| `src/core/optimizer.js` | `lib/core/optimizer.dart` | 그대로. 순수 수치 계산이다. |
 | `src/core/upgrades.js`, `balance.js`, `rng.js`, `korean.js` | 동일 | 그대로 |
 | `src/data/decks.js` | `assets/decks/*.txt` + 파서 | 그대로 |
 | `src/platform/webStorage.js` | `shared_preferences` 또는 `sqflite` | **여기만 새로 씀** (~60줄) |
 | `src/game/engine.js` | `lib/game/engine.dart` | 그대로 — 캔버스를 직접 안 쓴다 |
 | `src/game/renderer.js` | `CustomPainter` 또는 Flame | **다시 씀.** 그리기는 플랫폼의 몫 |
-| `src/game/input.js` | `GestureDetector` | 다시 씀 (~100줄) |
+| `src/game/input.js` | `GestureDetector` + `TextField` | 다시 씀 (~130줄, 철자 입력 포함) |
 | `src/game/audio.js` | `just_audio` / `flutter_tts` | 다시 씀 (~120줄) |
 | `src/ui/*` | Flutter 위젯 | 다시 씀 |
 
-**`core/` 1,400여 줄이 그대로 넘어간다.** 알고리즘·밸런스·출제 로직을 다시
+**`core/` 1,700여 줄이 그대로 넘어간다.** 알고리즘·밸런스·출제 로직을 다시
 설계하거나 다시 검증할 일이 없다는 뜻이고, 이 프로젝트에서 가장 값이 나가는 부분이 그쪽이다.
 
 `engine.js`까지 넘어가는 이유는 캔버스 의존을 주입으로 끊어 놨기 때문이다.
@@ -87,3 +88,7 @@ Dart에서는 `TextPainter`로 잰 값을 같은 자리에 넣으면 된다.
 3. **시간.** 모든 시각을 epoch 밀리초 정수로 다룬다. `DateTime.now().millisecondsSinceEpoch`로 대체.
 4. **저장 형식.** JSON 구조를 그대로 쓰면 웹에서 내보낸 백업을 모바일에서 가져올 수 있다.
    `Profile.importJSON`의 병합 규칙(더 많이 복습한 카드가 이긴다)을 그대로 옮길 것.
+   개인 최적화 파라미터(`fsrsParams`)도 함께 넘어간다.
+5. **철자 입력이 모바일에서 더 중요해진다.** 데스크톱에서는 마우스 조준이 주 입력이지만,
+   휴대폰에서는 작은 화면에 떨어지는 칩을 탭하는 것보다 키보드로 쓰는 편이 정확하다.
+   `answerMode`의 기본값을 플랫폼별로 다르게 잡는 것을 고려할 만하다.

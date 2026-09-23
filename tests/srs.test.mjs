@@ -174,3 +174,65 @@ test('한국어 조사 처리', async () => {
   assert.equal(hasFinalConsonant('사과'), false);
   assert.equal(hasFinalConsonant('사람'), true);
 });
+
+// --- 타이핑(자유 회상) ---------------------------------------------------
+
+test('타이핑 답안 정규화: 대소문자·공백·관사·구두점을 무시한다', async () => {
+  const { normalizeAnswer, checkTyped } = await import('../src/core/srs.js');
+  assert.equal(normalizeAnswer('  Apple. '), 'apple');
+  assert.equal(normalizeAnswer('to run'), 'run');
+  assert.equal(normalizeAnswer('The  Market'), 'market');
+  for (const t of ['apple', 'APPLE', ' Apple ', 'apple.']) {
+    assert.equal(checkTyped(t, 'apple').ok, true, t);
+  }
+});
+
+test('쉼표로 나뉜 복수 정답은 하나만 맞아도 된다', async () => {
+  const { checkTyped } = await import('../src/core/srs.js');
+  assert.equal(checkTyped('rice', '쌀, 밥').ok, false, '한국어 답은 영어로 못 맞힌다');
+  assert.equal(checkTyped('change', 'change, variation').ok, true);
+  assert.equal(checkTyped('variation', 'change, variation').ok, true);
+});
+
+test('긴 단어의 오타는 통과시키되 오타로 표시한다', async () => {
+  const { checkTyped } = await import('../src/core/srs.js');
+  const typo = checkTyped('accomodate', 'accommodate');
+  assert.equal(typo.ok, true);
+  assert.equal(typo.fuzzy, true, '오타인데 정확한 답으로 처리됐다');
+
+  assert.equal(checkTyped('accommodate', 'accommodate').fuzzy, false);
+  // 짧은 단어는 한 글자만 달라도 다른 단어다
+  assert.equal(checkTyped('cat', 'cot').ok, false);
+  assert.equal(checkTyped('bag', 'big').ok, false);
+  assert.equal(checkTyped('', 'apple').ok, false);
+});
+
+test('편집 거리는 상한을 넘으면 조기 종료한다', async () => {
+  const { editDistance } = await import('../src/core/srs.js');
+  assert.equal(editDistance('abc', 'abc'), 0);
+  assert.equal(editDistance('abc', 'abd'), 1);
+  assert.equal(editDistance('kitten', 'sitting'), 3);
+  assert.ok(editDistance('short', 'averylongword', 2) > 2);
+});
+
+test('마스킹은 첫 글자와 글자 수를 보여 준다', async () => {
+  const { maskAnswer } = await import('../src/core/srs.js');
+  assert.equal(maskAnswer('apple'), 'a _ _ _ _');
+  assert.equal(maskAnswer('apple', 2), 'a p p _ _');
+  assert.ok(maskAnswer('give up').includes('g'));
+  assert.ok(maskAnswer('apple').split('_').length - 1 === 4, '글자 수가 드러나야 한다');
+});
+
+test('타이핑은 자유 회상이므로 재인용 제동을 걸지 않는다', () => {
+  const fast = { correct: true, landed: false, reactionMs: 1200, windowMs: 8000, mode: 'typing', attempts: 1 };
+  // 처음 만난 단어라도, 보기가 없으면 Easy를 줄 수 있다
+  assert.equal(gradeFromEvent({ ...fast, firstExposure: true, options: 2 }), Rating.Easy);
+  // 재시도했거나 오타였다면 매끄러운 인출이 아니다
+  assert.equal(gradeFromEvent({ ...fast, attempts: 2 }), Rating.Hard);
+  assert.equal(gradeFromEvent({ ...fast, fuzzy: true }), Rating.Hard);
+  // 힌트를 받았으면 Easy는 아니다
+  assert.equal(gradeFromEvent({ ...fast, revealed: true }), Rating.Good);
+  // 틀리거나 놓친 건 그대로 Again
+  assert.equal(gradeFromEvent({ ...fast, correct: false }), Rating.Again);
+  assert.equal(gradeFromEvent({ ...fast, landed: true }), Rating.Again);
+});
